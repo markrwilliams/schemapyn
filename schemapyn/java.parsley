@@ -1,0 +1,85 @@
+string = '"' <(~'"' anything)*>:s '"' -> String(value=s)
+
+number = <'-'? digit+>
+
+boolean = "true" | "false"
+
+identifier = <(letter | '_' | '$') (letter | '_' | '$' | digit)+>:i -> i
+
+qualified_name = <(qualified_name "." identifier | identifier)>:n -> n
+
+instantiation = 'new' ws (generic | identifier):t ws meaningless_args:a
+           -> Instantiation(type=t, args=a)
+
+array = '{' atom?:head (ws ',' ws atom)*:tail '}'
+         -> Array(elements=[head] + tail)
+
+atom = (array | number | string | instantiation
+        | qualified_name | boolean | 'null')
+
+meaningless_args = '(' <(~')' anything)*>:a ')' -> a
+
+package_name = qualified_name:p ".*" -> PackageName(name=p)
+
+class_name = qualified_name:c -> ClassName(name=c)
+
+import_stmt = "import" ws (package_name | class_name):n ';'
+              -> ImportStmt(target=n)
+
+package_stmt = "package" ws qualified_name:n ';' -> Package(name=n)
+
+visibility = "public" | "protected" | "private"
+
+named_arg = identifier:a ws '=' ws arg:v -> NamedArgument(name=a, value=v)
+
+arg = atom:a -> Argument(value=a)
+
+interface_arg = (named_arg | arg):a -> a
+
+arg_list = '(' interface_arg:head (ws ',' ws interface_arg)*:tail ')'
+            -> [head] + tail
+
+annotation = '@' identifier:n ws arg_list?:a -> Annotation(name=n,
+                                                           arguments=a or [])
+
+assignment = '=' ws atom
+
+generic = identifier:i ws '<' ws (generic | identifier):t ws '>'
+          -> Generic(name=i, type=t)
+
+decl_first = (ws annotation)*:a ws visibility?:v ws 'static'?:sc
+             -> {'annotations': a, 'visibility': v if v else 'private',
+                 'static': bool(sc)}
+
+decl = decl_first:d ws (generic | identifier):t ws identifier:i
+       -> d.update(type=t, name=i) or d
+
+field_decl = decl:d ws assignment?:dft ws ';'
+           -> FieldDeclaration(default=dft, **d)
+
+method_decl = decl:d ws meaningless_args:a ws '{' <(~'}' anything)+>:b '}'
+            -> MethodDeclaration(block=b, args=a, **d)
+
+constructor_decl = decl_first:d identifier:n meaningless_args:a
+            ws '{' <(~'}' anything)+>:b '}'
+            -> MethodDeclaration(name=n, block=b, args=a, type='', **d)
+
+class_decl = decl_first:d ws "class" ws identifier:n ws extends?:e ws block:b
+             -> ClassDeclaration(name=n, super_class=e, block=b, **d)
+
+enum_decl = decl_first:d ws "enum" ws identifier:n ws block:b
+            -> EnumDeclaration(name=n, block=b, **d)
+
+enum_in = (ws annotation)*:a ws identifier:n ws meaningless_args:args
+          -> EnumInstantiation(name=n, args=args, annotations=a)
+
+enum_ins = enum_in:head ws (',' ws enum_in)+:tail ws ';'
+         -> EnumInstantiationGroup(instantiations=[head] + tail)
+
+block = '{' (class_decl | enum_decl | constructor_decl | method_decl
+             | field_decl | enum_ins)+:b ws '}' -> Block(body=b)
+
+extends = 'extends' ws qualified_name:e -> ClassName(name=e)
+
+class_file = package_stmt?:p ws import_stmt*:i class_decl:c
+             -> ClassFile(package=p, imports=i, class_declaration=c)
